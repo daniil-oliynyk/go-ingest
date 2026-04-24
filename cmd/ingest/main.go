@@ -14,6 +14,7 @@ import (
 
 type Config struct {
 	DatabaseURL string `env:"SUPABASE_URL"`
+	MapboxToken string `env:"MAPBOX_TOKEN"`
 }
 
 func main() {
