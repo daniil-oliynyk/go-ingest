@@ -27,7 +27,7 @@ type GeocodeCacheStore interface {
 }
 
 type Geocoder interface {
-	GeocodeAddress(ctx context.Context, query string) (model.GeocodeResult, error)
+	GeocodeAddresses(ctx context.Context, queries []string) ([]model.GeocodeResult, error)
 }
 
 type RunsStore interface {
@@ -122,6 +122,8 @@ func (o *Orchestrator) Run(ctx context.Context) (err error) {
 	newCacheRecords := make([]model.CachedGeocode, 0)
 	cacheHits := 0
 	cacheMisses := 0
+	missingIndexes := make([]int, 0)
+	missingQueries := make([]string, 0)
 	for i := range listings {
 		key := cacheLookupKey(listings[i].ID, listings[i].AddressKey)
 		if cached, ok := cacheResults[key]; ok {
@@ -133,28 +135,41 @@ func (o *Orchestrator) Run(ctx context.Context) (err error) {
 			continue
 		}
 		cacheMisses++
-		log.Printf("ingest: geocoding listing run_id=%s listing_id=%s", runID, listings[i].ID)
+		missingIndexes = append(missingIndexes, i)
+		missingQueries = append(missingQueries, listings[i].GeocodeQuery)
+	}
 
-		geocodeResult, geocodeErr := o.geocoder.GeocodeAddress(ctx, listings[i].GeocodeQuery)
+	if len(missingQueries) > 0 {
+		log.Printf("ingest: geocoding cache misses in batch run_id=%s misses=%d", runID, len(missingQueries))
+		batchResults, geocodeErr := o.geocoder.GeocodeAddresses(ctx, missingQueries)
 		if geocodeErr != nil {
-			log.Printf("ingest: geocode listing failed run_id=%s listing_id=%s err=%v", runID, listings[i].ID, geocodeErr)
-			return fmt.Errorf("geocode listing %s: %w", listings[i].ID, geocodeErr)
+			log.Printf("ingest: batch geocode failed run_id=%s err=%v", runID, geocodeErr)
+			return fmt.Errorf("batch geocode: %w", geocodeErr)
 		}
 
-		lat := geocodeResult.Latitude
-		lng := geocodeResult.Longitude
-		listings[i].Latitude = &lat
-		listings[i].Longitude = &lng
+		if len(batchResults) != len(missingIndexes) {
+			err := fmt.Errorf("batch geocode result count mismatch expected=%d got=%d", len(missingIndexes), len(batchResults))
+			log.Printf("ingest: %v run_id=%s", err, runID)
+			return err
+		}
 
-		newCacheRecords = append(newCacheRecords, model.CachedGeocode{
-			ListingID:  listings[i].ID,
-			AddressKey: listings[i].AddressKey,
-			Latitude:   geocodeResult.Latitude,
-			Longitude:  geocodeResult.Longitude,
-			Provider:   geocodeResult.Provider,
-			Confidence: geocodeResult.Confidence,
-			GeocodedAt: time.Now().UTC(),
-		})
+		for idx, listingIndex := range missingIndexes {
+			result := batchResults[idx]
+			lat := result.Latitude
+			lng := result.Longitude
+			listings[listingIndex].Latitude = &lat
+			listings[listingIndex].Longitude = &lng
+
+			newCacheRecords = append(newCacheRecords, model.CachedGeocode{
+				ListingID:  listings[listingIndex].ID,
+				AddressKey: listings[listingIndex].AddressKey,
+				Latitude:   result.Latitude,
+				Longitude:  result.Longitude,
+				Provider:   result.Provider,
+				Confidence: result.Confidence,
+				GeocodedAt: time.Now().UTC(),
+			})
+		}
 	}
 	log.Printf("ingest: geocode assignment complete run_id=%s cache_hits=%d cache_misses=%d new_cache_records=%d", runID, cacheHits, cacheMisses, len(newCacheRecords))
 
