@@ -3,6 +3,7 @@ package ingest
 import (
 	"context"
 	"fmt"
+	"log"
 	"time"
 
 	"github.com/daniil-oliynyk/go-ingest/internal/model"
@@ -58,34 +59,49 @@ func NewOrchestrator(source Source, transformer Transformer, listings ListingsSt
 
 func (o *Orchestrator) Run(ctx context.Context) (err error) {
 	startedAt := time.Now()
+	log.Printf("ingest: starting run source_url=%s", o.sourceURL)
 
 	runID, err := o.runs.StartRun(ctx, o.sourceURL)
 	if err != nil {
+		log.Printf("ingest: start run failed: %v", err)
 		return fmt.Errorf("start run: %w", err)
 	}
+	log.Printf("ingest: run started run_id=%s", runID)
 
 	stats := model.IngestStats{}
 	defer func() {
 		stats.DurationMS = time.Since(startedAt).Milliseconds()
+		if err != nil {
+			log.Printf("ingest: run finishing with error run_id=%s duration_ms=%d err=%v", runID, stats.DurationMS, err)
+		}
 		if completeErr := o.runs.CompleteRun(ctx, runID, stats, err); completeErr != nil {
+			log.Printf("ingest: complete run update failed run_id=%s err=%v", runID, completeErr)
 			if err != nil {
 				err = fmt.Errorf("%w; complete run: %v", err, completeErr)
 				return
 			}
 			err = fmt.Errorf("complete run: %w", completeErr)
+			return
 		}
+		log.Printf("ingest: run completed run_id=%s rows_fetched=%d rows_inserted=%d duration_ms=%d", runID, stats.RowsFetched, stats.RowsInserted, stats.DurationMS)
 	}()
 
+	log.Printf("ingest: fetching source listings run_id=%s", runID)
 	rawListings, err := o.source.FetchListings(ctx)
 	if err != nil {
+		log.Printf("ingest: fetch listings failed run_id=%s err=%v", runID, err)
 		return fmt.Errorf("fetch listings: %w", err)
 	}
 	stats.RowsFetched = len(rawListings)
+	log.Printf("ingest: fetched listings run_id=%s rows=%d", runID, stats.RowsFetched)
 
+	log.Printf("ingest: transforming listings run_id=%s", runID)
 	listings, err := o.transformer.MapListings(rawListings, runID)
 	if err != nil {
+		log.Printf("ingest: transform listings failed run_id=%s err=%v", runID, err)
 		return fmt.Errorf("transform listings: %w", err)
 	}
+	log.Printf("ingest: transformed listings run_id=%s rows=%d", runID, len(listings))
 
 	lookupKeys := make([]model.GeocodeLookupKey, 0, len(listings))
 	for _, listing := range listings {
@@ -95,24 +111,33 @@ func (o *Orchestrator) Run(ctx context.Context) (err error) {
 		})
 	}
 
+	log.Printf("ingest: checking geocode cache run_id=%s keys=%d", runID, len(lookupKeys))
 	cacheResults, err := o.geocache.GetByListingAndAddressKeys(ctx, lookupKeys)
 	if err != nil {
+		log.Printf("ingest: lookup geocode cache failed run_id=%s err=%v", runID, err)
 		return fmt.Errorf("lookup geocode cache: %w", err)
 	}
+	log.Printf("ingest: geocode cache results run_id=%s hits=%d", runID, len(cacheResults))
 
 	newCacheRecords := make([]model.CachedGeocode, 0)
+	cacheHits := 0
+	cacheMisses := 0
 	for i := range listings {
 		key := cacheLookupKey(listings[i].ID, listings[i].AddressKey)
 		if cached, ok := cacheResults[key]; ok {
+			cacheHits++
 			lat := cached.Latitude
 			lng := cached.Longitude
 			listings[i].Latitude = &lat
 			listings[i].Longitude = &lng
 			continue
 		}
+		cacheMisses++
+		log.Printf("ingest: geocoding listing run_id=%s listing_id=%s", runID, listings[i].ID)
 
 		geocodeResult, geocodeErr := o.geocoder.GeocodeAddress(ctx, listings[i].GeocodeQuery)
 		if geocodeErr != nil {
+			log.Printf("ingest: geocode listing failed run_id=%s listing_id=%s err=%v", runID, listings[i].ID, geocodeErr)
 			return fmt.Errorf("geocode listing %s: %w", listings[i].ID, geocodeErr)
 		}
 
@@ -131,15 +156,22 @@ func (o *Orchestrator) Run(ctx context.Context) (err error) {
 			GeocodedAt: time.Now().UTC(),
 		})
 	}
+	log.Printf("ingest: geocode assignment complete run_id=%s cache_hits=%d cache_misses=%d new_cache_records=%d", runID, cacheHits, cacheMisses, len(newCacheRecords))
 
+	log.Printf("ingest: upserting geocode cache run_id=%s records=%d", runID, len(newCacheRecords))
 	if err := o.geocache.Upsert(ctx, newCacheRecords); err != nil {
+		log.Printf("ingest: upsert geocode cache failed run_id=%s err=%v", runID, err)
 		return fmt.Errorf("upsert geocode cache: %w", err)
 	}
+	log.Printf("ingest: geocode cache upsert complete run_id=%s records=%d", runID, len(newCacheRecords))
 
+	log.Printf("ingest: refreshing listings table run_id=%s rows=%d", runID, len(listings))
 	if err = o.listings.RefreshListingsTx(ctx, listings); err != nil {
+		log.Printf("ingest: refresh listings failed run_id=%s err=%v", runID, err)
 		return fmt.Errorf("refresh listings: %w", err)
 	}
 	stats.RowsInserted = len(listings)
+	log.Printf("ingest: listings refresh complete run_id=%s rows_inserted=%d", runID, stats.RowsInserted)
 
 	return nil
 }

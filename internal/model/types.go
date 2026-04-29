@@ -52,7 +52,7 @@ type GeocodeResult struct {
 	Latitude   float64
 	Longitude  float64
 	Provider   string
-	Confidence *float64
+	Confidence string
 }
 
 type CachedGeocode struct {
@@ -61,6 +61,6 @@ type CachedGeocode struct {
 	Latitude   float64
 	Longitude  float64
 	Provider   string
-	Confidence *float64
+	Confidence string
 	GeocodedAt time.Time
 }

@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"fmt"
+	"log"
 	"time"
 
 	"github.com/daniil-oliynyk/go-ingest/internal/model"
@@ -19,15 +20,22 @@ func NewGeocodeCacheRepo(pool *pgxpool.Pool) *GeocodeCacheRepo {
 }
 
 func (r *GeocodeCacheRepo) GetByListingAndAddressKeys(ctx context.Context, keys []model.GeocodeLookupKey) (map[string]model.CachedGeocode, error) {
+	log.Printf("store:geocode_cache: lookup started keys=%d", len(keys))
 	result := make(map[string]model.CachedGeocode, len(keys))
 	if len(keys) == 0 {
+		log.Println("store:geocode_cache: lookup skipped (no keys)")
 		return result, nil
 	}
 
+	hits := 0
+	misses := 0
 	for _, key := range keys {
 		if key.ListingID == "" || key.AddressKey == "" {
+			log.Printf("store:geocode_cache: skipping invalid key listing_id=%q address_key=%q", key.ListingID, key.AddressKey)
 			continue
 		}
+
+		// log.Printf("store:geocode_cache: looking up key listing_id=%s address_key=%s", key.ListingID, key.AddressKey)
 
 		var cached model.CachedGeocode
 		err := r.Pool.QueryRow(ctx, `
@@ -45,26 +53,34 @@ func (r *GeocodeCacheRepo) GetByListingAndAddressKeys(ctx context.Context, keys 
 		)
 		if err != nil {
 			if err == pgx.ErrNoRows {
+				misses++
 				continue
 			}
+			log.Printf("store:geocode_cache: lookup failed listing_id=%s address_key=%s err=%v", key.ListingID, key.AddressKey, err)
 			return nil, fmt.Errorf("lookup geocode cache for %s/%s: %w", key.ListingID, key.AddressKey, err)
 		}
 
+		hits++
 		result[cacheMapKey(key.ListingID, key.AddressKey)] = cached
 	}
+	log.Printf("store:geocode_cache: lookup completed hits=%d misses=%d", hits, misses)
 
 	return result, nil
 }
 
 func (r *GeocodeCacheRepo) Upsert(ctx context.Context, records []model.CachedGeocode) error {
+	log.Printf("store:geocode_cache: upsert started records=%d", len(records))
 	if len(records) == 0 {
+		log.Println("store:geocode_cache: upsert skipped (no records)")
 		return nil
 	}
 
 	now := time.Now().UTC()
 	batch := &pgx.Batch{}
+	queued := 0
 	for _, record := range records {
 		if record.ListingID == "" || record.AddressKey == "" {
+			log.Printf("store:geocode_cache: skipping invalid record listing_id=%q address_key=%q", record.ListingID, record.AddressKey)
 			continue
 		}
 
@@ -110,16 +126,24 @@ func (r *GeocodeCacheRepo) Upsert(ctx context.Context, records []model.CachedGeo
 			record.Confidence,
 			geocodedAt,
 		)
+		queued++
+	}
+	log.Printf("store:geocode_cache: batch queued statements=%d", queued)
+	if queued == 0 {
+		log.Println("store:geocode_cache: upsert skipped (no valid records after filtering)")
+		return nil
 	}
 
 	results := r.Pool.SendBatch(ctx, batch)
 	defer results.Close()
 
-	for range batch.Len() {
+	for i := 0; i < batch.Len(); i++ {
 		if _, err := results.Exec(); err != nil {
+			log.Printf("store:geocode_cache: batch exec failed index=%d err=%v", i, err)
 			return fmt.Errorf("upsert geocode cache: %w", err)
 		}
 	}
+	log.Printf("store:geocode_cache: upsert completed statements=%d", batch.Len())
 
 	return nil
 }

@@ -3,6 +3,7 @@ package transform
 import (
 	"encoding/json"
 	"fmt"
+	"log"
 	"math"
 	"strconv"
 	"strings"
@@ -18,10 +19,13 @@ func NewListingMapper() *ListingMapper {
 }
 
 func (m *ListingMapper) MapListings(raw []map[string]any, runID string) ([]model.Listing, error) {
+	log.Printf("transform: map listings started run_id=%s raw_rows=%d", runID, len(raw))
 	if runID == "" {
+		log.Println("transform: map listings failed: run id is empty")
 		return nil, fmt.Errorf("run id is required")
 	}
 	if len(raw) == 0 {
+		log.Println("transform: map listings failed: raw listings are empty")
 		return nil, fmt.Errorf("no source listings to map")
 	}
 
@@ -31,25 +35,30 @@ func (m *ListingMapper) MapListings(raw []map[string]any, runID string) ([]model
 	for i, row := range raw {
 		id, err := stringFromKeys(row, "operator_registration_number", "registration_number", "id", "_id", "listing_id")
 		if err != nil {
+			log.Printf("transform: row mapping failed row=%d err=%v", i, err)
 			return nil, fmt.Errorf("row %d: %w", i, err)
 		}
 
 		address, err := stringFromKeys(row, "address")
 		if err != nil {
+			log.Printf("transform: row mapping failed row=%d listing_id=%s stage=address err=%v", i, id, err)
 			return nil, fmt.Errorf("row %d id %s: %w", i, id, err)
 		}
 		postalCode, err := stringFromKeys(row, "postal_code", "postal", "postcode")
 		if err != nil {
+			log.Printf("transform: row mapping failed row=%d listing_id=%s stage=postal_code err=%v", i, id, err)
 			return nil, fmt.Errorf("row %d id %s: %w", i, id, err)
 		}
 
 		sourceUpdatedAt, err := optionalTimeFromKeys(row, "source_updated_at", "updated_at", "last_modified", "modified")
 		if err != nil {
+			log.Printf("transform: row mapping failed row=%d listing_id=%s stage=source_updated_at err=%v", i, id, err)
 			return nil, fmt.Errorf("row %d id %s: %w", i, id, err)
 		}
 
 		rawPayload, err := json.Marshal(row)
 		if err != nil {
+			log.Printf("transform: row mapping failed row=%d listing_id=%s stage=marshal_payload err=%v", i, id, err)
 			return nil, fmt.Errorf("row %d id %s: marshal raw payload: %w", i, id, err)
 		}
 
@@ -67,6 +76,7 @@ func (m *ListingMapper) MapListings(raw []map[string]any, runID string) ([]model
 			RawPayload:      rawPayload,
 		})
 	}
+	log.Printf("transform: map listings completed run_id=%s mapped_rows=%d", runID, len(listings))
 
 	return listings, nil
 }
