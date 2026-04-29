@@ -32,3 +32,18 @@ CREATE INDEX IF NOT EXISTS listings_geom_gix
 
 CREATE INDEX IF NOT EXISTS listings_ingestion_run_id_idx
     ON "Listings" (ingestion_run_id);
+
+CREATE TABLE IF NOT EXISTS listing_geocodes (
+    listing_id text NOT NULL,
+    address_key text NOT NULL,
+    latitude double precision NOT NULL CHECK (latitude >= -90 AND latitude <= 90),
+    longitude double precision NOT NULL CHECK (longitude >= -180 AND longitude <= 180),
+    geom geometry(Point, 4326) NOT NULL,
+    provider text NOT NULL,
+    confidence double precision,
+    geocoded_at timestamptz NOT NULL DEFAULT now(),
+    PRIMARY KEY (listing_id, address_key)
+);
+
+CREATE INDEX IF NOT EXISTS listing_geocodes_geom_gix
+    ON listing_geocodes USING GIST (geom);
