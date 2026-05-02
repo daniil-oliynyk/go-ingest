@@ -179,23 +179,27 @@ func (o *Orchestrator) Run(ctx context.Context) (err error) {
 				GeocodedAt: time.Now().UTC(),
 			})
 		}
-	}
-	log.Printf("ingest: geocode assignment complete run_id=%s cache_hits=%d cache_misses=%d new_cache_records=%d", runID, cacheHits, cacheMisses, len(newCacheRecords))
 
-	log.Printf("ingest: upserting geocode cache run_id=%s records=%d", runID, len(newCacheRecords))
-	if err := o.geocache.Upsert(ctx, newCacheRecords); err != nil {
-		log.Printf("ingest: upsert geocode cache failed run_id=%s err=%v", runID, err)
-		return fmt.Errorf("upsert geocode cache: %w", err)
-	}
-	log.Printf("ingest: geocode cache upsert complete run_id=%s records=%d", runID, len(newCacheRecords))
+		log.Printf("ingest: geocode assignment complete run_id=%s cache_hits=%d cache_misses=%d new_cache_records=%d", runID, cacheHits, cacheMisses, len(newCacheRecords))
 
-	log.Printf("ingest: refreshing listings table run_id=%s rows=%d", runID, len(listings))
-	if err = o.listings.RefreshListingsTx(ctx, listings); err != nil {
-		log.Printf("ingest: refresh listings failed run_id=%s err=%v", runID, err)
-		return fmt.Errorf("refresh listings: %w", err)
+		log.Printf("ingest: upserting geocode cache run_id=%s records=%d", runID, len(newCacheRecords))
+		if err := o.geocache.Upsert(ctx, newCacheRecords); err != nil {
+			log.Printf("ingest: upsert geocode cache failed run_id=%s err=%v", runID, err)
+			return fmt.Errorf("upsert geocode cache: %w", err)
+		}
+		log.Printf("ingest: geocode cache upsert complete run_id=%s records=%d", runID, len(newCacheRecords))
+
+		log.Printf("ingest: refreshing listings table run_id=%s rows=%d", runID, len(listings))
+		if err = o.listings.RefreshListingsTx(ctx, listings); err != nil {
+			log.Printf("ingest: refresh listings failed run_id=%s err=%v", runID, err)
+			return fmt.Errorf("refresh listings: %w", err)
+		}
+		stats.RowsInserted = len(listings)
+		log.Printf("ingest: listings refresh complete run_id=%s rows_inserted=%d", runID, stats.RowsInserted)
+
+	} else {
+		log.Printf("ingest: missingQueries=%d no need to Upsert into cache or refresh Listigns", len(missingQueries))
 	}
-	stats.RowsInserted = len(listings)
-	log.Printf("ingest: listings refresh complete run_id=%s rows_inserted=%d", runID, stats.RowsInserted)
 
 	return nil
 }
