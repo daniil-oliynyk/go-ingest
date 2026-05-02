@@ -46,11 +46,20 @@ func (r *ListingsRepo) RefreshListingsTx(ctx context.Context, listings []model.L
 			log.Printf("store:listings: listing missing coordinates index=%d listing_id=%s", i, listing.ID)
 			return fmt.Errorf("listing %s missing coordinates", listing.ID)
 		}
+		if !validCoordinates(*listing.Latitude, *listing.Longitude) {
+			log.Printf("store:listings: listing invalid coordinates index=%d listing_id=%s latitude=%f longitude=%f", i, listing.ID, *listing.Latitude, *listing.Longitude)
+			return fmt.Errorf("listing %s invalid coordinates", listing.ID)
+		}
 
-		log.Printf("store:listings: inserting listing index=%d listing_id=%s", i, listing.ID)
+		// log.Printf("store:listings: inserting listing index=%d listing_id=%s", i, listing.ID)
 		if _, err := tx.Exec(ctx, `
 			INSERT INTO "Listings" (
 				id,
+				address,
+				postal_code,
+				property_type,
+				ward_number,
+				ward_name,
 				latitude,
 				longitude,
 				geom,
@@ -63,20 +72,30 @@ func (r *ListingsRepo) RefreshListingsTx(ctx context.Context, listings []model.L
 				$1,
 				$2,
 				$3,
-				ST_SetSRID(ST_MakePoint($3, $2), 4326),
 				$4,
 				$5,
 				$6,
-				$7
+				$7,
+				$8,
+				ST_SetSRID(ST_MakePoint($8, $7), 4326),
+				$9,
+				$10,
+				$11,
+				$12::jsonb
 			)
 		`,
 			listing.ID,
+			listing.Address,
+			listing.PostalCode,
+			nullableString(listing.PropertyType),
+			nullableString(listing.WardNumber),
+			nullableString(listing.WardName),
 			*listing.Latitude,
 			*listing.Longitude,
 			listing.SourceUpdatedAt,
 			listing.IngestedAt,
 			listing.IngestionRunID,
-			listing.RawPayload,
+			string(listing.RawPayload),
 		); err != nil {
 			log.Printf("store:listings: insert listing failed listing_id=%s err=%v", listing.ID, err)
 			return fmt.Errorf("insert listing %s: %w", listing.ID, err)
@@ -92,4 +111,16 @@ func (r *ListingsRepo) RefreshListingsTx(ctx context.Context, listings []model.L
 	log.Printf("store:listings: refresh transaction committed rows=%d", len(listings))
 
 	return nil
+}
+
+func validCoordinates(latitude, longitude float64) bool {
+	return latitude >= -90 && latitude <= 90 && longitude >= -180 && longitude <= 180
+}
+
+func nullableString(value string) any {
+	if value == "" {
+		return nil
+	}
+
+	return value
 }

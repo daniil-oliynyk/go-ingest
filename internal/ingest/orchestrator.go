@@ -150,11 +150,20 @@ func (o *Orchestrator) Run(ctx context.Context) (err error) {
 		if len(batchResults) != len(missingIndexes) {
 			err := fmt.Errorf("batch geocode result count mismatch expected=%d got=%d", len(missingIndexes), len(batchResults))
 			log.Printf("ingest: %v run_id=%s", err, runID)
-			return err
+			// return err
+
 		}
 
-		for idx, listingIndex := range missingIndexes {
-			result := batchResults[idx]
+		for idx, result := range batchResults {
+
+			if idx >= len(missingIndexes) {
+				break
+			}
+			if result == (model.GeocodeResult{}) {
+				continue
+			}
+
+			listingIndex := missingIndexes[idx]
 			lat := result.Latitude
 			lng := result.Longitude
 			listings[listingIndex].Latitude = &lat

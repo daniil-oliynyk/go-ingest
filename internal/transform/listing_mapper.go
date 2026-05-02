@@ -49,6 +49,9 @@ func (m *ListingMapper) MapListings(raw []map[string]any, runID string) ([]model
 			log.Printf("transform: row mapping failed row=%d listing_id=%s stage=postal_code err=%v", i, id, err)
 			return nil, fmt.Errorf("row %d id %s: %w", i, id, err)
 		}
+		propertyType := optionalStringFromKeys(row, "property_type")
+		wardNumber := optionalStringFromKeys(row, "ward_number", "ward")
+		wardName := optionalStringFromKeys(row, "ward_name")
 
 		sourceUpdatedAt, err := optionalTimeFromKeys(row, "source_updated_at", "updated_at", "last_modified", "modified")
 		if err != nil {
@@ -66,6 +69,9 @@ func (m *ListingMapper) MapListings(raw []map[string]any, runID string) ([]model
 			ID:              id,
 			Address:         address,
 			PostalCode:      normalizePostalCode(postalCode),
+			PropertyType:    propertyType,
+			WardNumber:      wardNumber,
+			WardName:        wardName,
 			AddressKey:      normalizeAddressKey(address, postalCode),
 			GeocodeQuery:    buildGeocodeQuery(address, postalCode),
 			Latitude:        nil,
@@ -136,6 +142,15 @@ func stringFromKeys(row map[string]any, keys ...string) (string, error) {
 	}
 
 	return "", fmt.Errorf("missing required string field (checked keys: %s)", strings.Join(keys, ", "))
+}
+
+func optionalStringFromKeys(row map[string]any, keys ...string) string {
+	value, err := stringFromKeys(row, keys...)
+	if err != nil {
+		return ""
+	}
+
+	return value
 }
 
 func floatFromKeys(row map[string]any, keys ...string) (float64, error) {

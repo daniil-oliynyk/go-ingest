@@ -6,6 +6,9 @@ type Listing struct {
 	ID              string
 	Address         string
 	PostalCode      string
+	PropertyType    string
+	WardNumber      string
+	WardName        string
 	AddressKey      string
 	GeocodeQuery    string
 	Latitude        *float64

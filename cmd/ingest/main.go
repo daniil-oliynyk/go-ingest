@@ -18,7 +18,8 @@ import (
 )
 
 type Config struct {
-	DatabaseURL string        `env:"SUPABASE_URL"`
+	DatabaseURL string        `env:"DATABASE_URL"`
+	SupabaseURL string        `env:"SUPABASE_URL"`
 	MapboxToken string        `env:"MAPBOX_TOKEN"`
 	SourceURL   string        `env:"SOURCE_URL" envDefault:"https://ckan0.cf.opendata.inter.prod-toronto.ca/datastore/dump/f4659cc1-8985-4e4a-a702-ae24352271e0?format=json"`
 	Timeout     time.Duration `env:"INGEST_TIMEOUT" envDefault:"10m"`
@@ -37,13 +38,18 @@ func main() {
 
 	dbURL := cfg.DatabaseURL
 	if dbURL == "" {
-		dbURL = os.Getenv("DATABASE_URL")
+		dbURL = cfg.SupabaseURL
 	}
 	if dbURL == "" {
 		log.Println("main: database URL is required (SUPABASE_URL or DATABASE_URL)")
 		os.Exit(1)
 	}
 	log.Println("main: database URL loaded")
+
+	if cfg.MapboxToken == "" {
+		log.Println("main: Mapbox token is required (MAPBOX_TOKEN)")
+		os.Exit(1)
+	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), cfg.Timeout)
 	defer cancel()

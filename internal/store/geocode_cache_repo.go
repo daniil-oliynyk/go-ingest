@@ -83,6 +83,10 @@ func (r *GeocodeCacheRepo) Upsert(ctx context.Context, records []model.CachedGeo
 			log.Printf("store:geocode_cache: skipping invalid record listing_id=%q address_key=%q", record.ListingID, record.AddressKey)
 			continue
 		}
+		if !validCoordinates(record.Latitude, record.Longitude) {
+			log.Printf("store:geocode_cache: invalid coordinates listing_id=%s address_key=%s latitude=%f longitude=%f", record.ListingID, record.AddressKey, record.Latitude, record.Longitude)
+			return fmt.Errorf("invalid geocode coordinates for %s/%s", record.ListingID, record.AddressKey)
+		}
 
 		geocodedAt := record.GeocodedAt
 		if geocodedAt.IsZero() {

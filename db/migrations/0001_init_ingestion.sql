@@ -18,6 +18,11 @@ CREATE INDEX IF NOT EXISTS ingestion_runs_started_at_idx
 
 CREATE TABLE IF NOT EXISTS "Listings" (
     id text PRIMARY KEY,
+    address text NOT NULL,
+    postal_code text NOT NULL,
+    property_type text,
+    ward_number text,
+    ward_name text,
     latitude double precision NOT NULL CHECK (latitude >= -90 AND latitude <= 90),
     longitude double precision NOT NULL CHECK (longitude >= -180 AND longitude <= 180),
     geom geometry(Point, 4326) NOT NULL,
@@ -40,7 +45,7 @@ CREATE TABLE IF NOT EXISTS listing_geocodes (
     longitude double precision NOT NULL CHECK (longitude >= -180 AND longitude <= 180),
     geom geometry(Point, 4326) NOT NULL,
     provider text NOT NULL,
-    confidence double precision,
+    confidence text,
     geocoded_at timestamptz NOT NULL DEFAULT now(),
     PRIMARY KEY (listing_id, address_key)
 );

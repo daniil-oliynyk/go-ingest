@@ -201,7 +201,12 @@ func decodeMapboxBatchResponse(body []byte, expected int) ([]model.GeocodeResult
 	results := make([]model.GeocodeResult, 0, len(payload.Batch))
 	for i, item := range payload.Batch {
 		if len(item.Features) == 0 {
-			return nil, fmt.Errorf("no geocoding result for batch index %d", i)
+			log.Printf("no geocoding result for batch index %d", i)
+			continue
+
+			// TODO: Create a list or something to track missing geocoded addresses to then do them 1 at a time instead of a batch.
+			// For some reason an address cannot get geocoded when batched but a single request works
+			// return nil, fmt.Errorf("no geocoding result for batch index %d", i)
 		}
 
 		feature := item.Features[0]
