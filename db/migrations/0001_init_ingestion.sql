@@ -52,3 +52,6 @@ CREATE TABLE IF NOT EXISTS listing_geocodes (
 
 CREATE INDEX IF NOT EXISTS listing_geocodes_geom_gix
     ON listing_geocodes USING GIST (geom);
+
+CREATE INDEX IF NOT EXISTS listing_geocodes_address_key_idx
+    ON listing_geocodes (address_key);

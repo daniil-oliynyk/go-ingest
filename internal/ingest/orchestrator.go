@@ -122,9 +122,12 @@ func (o *Orchestrator) Run(ctx context.Context) (err error) {
 	newCacheRecords := make([]model.CachedGeocode, 0)
 	cacheHits := 0
 	cacheMisses := 0
+	listingIndexesByAddressKey := make(map[string][]int, len(listings))
+	missingAddressKeys := make(map[string]struct{})
 	missingIndexes := make([]int, 0)
 	missingQueries := make([]string, 0)
 	for i := range listings {
+		listingIndexesByAddressKey[listings[i].AddressKey] = append(listingIndexesByAddressKey[listings[i].AddressKey], i)
 		key := cacheLookupKey(listings[i].ID, listings[i].AddressKey)
 		if cached, ok := cacheResults[key]; ok {
 			cacheHits++
@@ -135,12 +138,16 @@ func (o *Orchestrator) Run(ctx context.Context) (err error) {
 			continue
 		}
 		cacheMisses++
+		if _, ok := missingAddressKeys[listings[i].AddressKey]; ok {
+			continue
+		}
+		missingAddressKeys[listings[i].AddressKey] = struct{}{}
 		missingIndexes = append(missingIndexes, i)
 		missingQueries = append(missingQueries, listings[i].GeocodeQuery)
 	}
 
 	if len(missingQueries) > 0 {
-		log.Printf("ingest: geocoding cache misses in batch run_id=%s misses=%d", runID, len(missingQueries))
+		log.Printf("ingest: geocoding cache misses in batch run_id=%s missing_listings=%d unique_addresses=%d", runID, cacheMisses, len(missingQueries))
 		batchResults, geocodeErr := o.geocoder.GeocodeAddresses(ctx, missingQueries)
 		if geocodeErr != nil {
 			log.Printf("ingest: batch geocode failed run_id=%s err=%v", runID, geocodeErr)
@@ -150,34 +157,36 @@ func (o *Orchestrator) Run(ctx context.Context) (err error) {
 		if len(batchResults) != len(missingIndexes) {
 			err := fmt.Errorf("batch geocode result count mismatch expected=%d got=%d", len(missingIndexes), len(batchResults))
 			log.Printf("ingest: %v run_id=%s", err, runID)
-			// return err
-
+			return err
 		}
 
 		for idx, result := range batchResults {
-
-			if idx >= len(missingIndexes) {
-				break
-			}
 			if result == (model.GeocodeResult{}) {
-				continue
+				listingIndex := missingIndexes[idx]
+				err := fmt.Errorf("missing geocode result for address_key=%s query=%q", listings[listingIndex].AddressKey, listings[listingIndex].GeocodeQuery)
+				log.Printf("ingest: %v run_id=%s", err, runID)
+				return err
 			}
 
 			listingIndex := missingIndexes[idx]
-			lat := result.Latitude
-			lng := result.Longitude
-			listings[listingIndex].Latitude = &lat
-			listings[listingIndex].Longitude = &lng
+			addressKey := listings[listingIndex].AddressKey
+			geocodedAt := time.Now().UTC()
+			for _, matchingIndex := range listingIndexesByAddressKey[addressKey] {
+				lat := result.Latitude
+				lng := result.Longitude
+				listings[matchingIndex].Latitude = &lat
+				listings[matchingIndex].Longitude = &lng
 
-			newCacheRecords = append(newCacheRecords, model.CachedGeocode{
-				ListingID:  listings[listingIndex].ID,
-				AddressKey: listings[listingIndex].AddressKey,
-				Latitude:   result.Latitude,
-				Longitude:  result.Longitude,
-				Provider:   result.Provider,
-				Confidence: result.Confidence,
-				GeocodedAt: time.Now().UTC(),
-			})
+				newCacheRecords = append(newCacheRecords, model.CachedGeocode{
+					ListingID:  listings[matchingIndex].ID,
+					AddressKey: addressKey,
+					Latitude:   result.Latitude,
+					Longitude:  result.Longitude,
+					Provider:   result.Provider,
+					Confidence: result.Confidence,
+					GeocodedAt: geocodedAt,
+				})
+			}
 		}
 
 		log.Printf("ingest: geocode assignment complete run_id=%s cache_hits=%d cache_misses=%d new_cache_records=%d", runID, cacheHits, cacheMisses, len(newCacheRecords))
@@ -188,18 +197,17 @@ func (o *Orchestrator) Run(ctx context.Context) (err error) {
 			return fmt.Errorf("upsert geocode cache: %w", err)
 		}
 		log.Printf("ingest: geocode cache upsert complete run_id=%s records=%d", runID, len(newCacheRecords))
-
-		log.Printf("ingest: refreshing listings table run_id=%s rows=%d", runID, len(listings))
-		if err = o.listings.RefreshListingsTx(ctx, listings); err != nil {
-			log.Printf("ingest: refresh listings failed run_id=%s err=%v", runID, err)
-			return fmt.Errorf("refresh listings: %w", err)
-		}
-		stats.RowsInserted = len(listings)
-		log.Printf("ingest: listings refresh complete run_id=%s rows_inserted=%d", runID, stats.RowsInserted)
-
 	} else {
-		log.Printf("ingest: missingQueries=%d no need to Upsert into cache or refresh Listigns", len(missingQueries))
+		log.Printf("ingest: geocode cache covered all listings run_id=%s cache_hits=%d", runID, cacheHits)
 	}
+
+	log.Printf("ingest: refreshing listings table run_id=%s rows=%d", runID, len(listings))
+	if err = o.listings.RefreshListingsTx(ctx, listings); err != nil {
+		log.Printf("ingest: refresh listings failed run_id=%s err=%v", runID, err)
+		return fmt.Errorf("refresh listings: %w", err)
+	}
+	stats.RowsInserted = len(listings)
+	log.Printf("ingest: listings refresh complete run_id=%s rows_inserted=%d", runID, stats.RowsInserted)
 
 	return nil
 }

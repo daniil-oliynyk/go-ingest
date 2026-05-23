@@ -41,8 +41,18 @@ func (r *GeocodeCacheRepo) GetByListingAndAddressKeys(ctx context.Context, keys 
 		err := r.Pool.QueryRow(ctx, `
 			SELECT listing_id, address_key, latitude, longitude, provider, confidence, geocoded_at
 			FROM listing_geocodes
-			WHERE listing_id = $1 AND address_key = $2
-		`, key.ListingID, key.AddressKey).Scan(
+			WHERE address_key = $1
+			ORDER BY
+				CASE lower(coalesce(confidence, ''))
+					WHEN 'exact' THEN 1
+					WHEN 'high' THEN 2
+					WHEN 'medium' THEN 3
+					WHEN 'low' THEN 4
+					ELSE 5
+				END,
+				geocoded_at DESC
+			LIMIT 1
+		`, key.AddressKey).Scan(
 			&cached.ListingID,
 			&cached.AddressKey,
 			&cached.Latitude,
@@ -61,6 +71,7 @@ func (r *GeocodeCacheRepo) GetByListingAndAddressKeys(ctx context.Context, keys 
 		}
 
 		hits++
+		cached.ListingID = key.ListingID
 		result[cacheMapKey(key.ListingID, key.AddressKey)] = cached
 	}
 	log.Printf("store:geocode_cache: lookup completed hits=%d misses=%d", hits, misses)
